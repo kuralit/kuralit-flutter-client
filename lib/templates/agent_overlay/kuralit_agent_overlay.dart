@@ -123,8 +123,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
     with TickerProviderStateMixin {
   
   // Logic State
-  bool _isConnected = false;
-  bool _isAgentActive = false;
   StreamSubscription<KuralitUiEvent>? _eventSubscription;
   bool _isRecording = false;
   String? _serverSessionId;
@@ -200,7 +198,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         }
       } else if (event is KuralitUiConnectionEvent) {
         setState(() {
-          _isConnected = event.isConnected;
           _serverSessionId = event.sessionId;
         });
 
@@ -253,12 +250,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         _appendSystemMessage(event.message);
       }
     });
-    _isConnected = widget.controller.isConnected;
     _serverSessionId = widget.controller.sessionId;
   }
-
-  String get _currentSessionId =>
-      _serverSessionId ?? widget.sessionId ?? widget.controller.sessionId ?? '';
 
   void _sendText(String text) {
     final q = text.trim();
@@ -315,7 +308,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
 
   void _appendUserText(String text) {
     setState(() {
-      _isAgentActive = true;
       _messages.add(_OverlayMessage.userText(text));
       _trimToLast10Turns();
     });
@@ -326,7 +318,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
     final t = text.trim();
     if (t.isEmpty) return;
     setState(() {
-      _isAgentActive = true;
       _isProcessingTool = false;
       _hideAssistantTyping();
       _messages.add(_OverlayMessage.assistantText(t));
@@ -338,7 +329,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   void _appendAssistantProducts(KuralitUiProductsEvent event) {
     if (event.items.isEmpty) return;
     setState(() {
-      _isAgentActive = true;
       _isProcessingTool = false;
       _hideAssistantTyping();
       _selectedProductIds.clear();
@@ -374,7 +364,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
       _toolStatusText = null;
       _selectedProductIds.clear();
       _liveSttText = null;
-      _isAgentActive = false;
     });
 
     // Subtle UX: floating toast instead of a red system chip.
@@ -465,7 +454,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
 
     setState(() {
       _isRecording = true;
-      _isAgentActive = true;
       _audioLevel = 0.0;
     });
 
