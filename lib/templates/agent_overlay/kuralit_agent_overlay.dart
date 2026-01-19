@@ -125,7 +125,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   // Logic State
   StreamSubscription<KuralitUiEvent>? _eventSubscription;
   bool _isRecording = false;
-  String? _serverSessionId;
 
   // Conversation (Option A): last 10 turns per overlay session.
   final List<_OverlayMessage> _messages = <_OverlayMessage>[];
@@ -198,7 +197,7 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         }
       } else if (event is KuralitUiConnectionEvent) {
         setState(() {
-          _serverSessionId = event.sessionId;
+          // Connection status updated
         });
 
         // Mic-only behavior: if we lose connection while recording, stop and show toast.
@@ -250,7 +249,6 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         _appendSystemMessage(event.message);
       }
     });
-    _serverSessionId = widget.controller.sessionId;
   }
 
   void _sendText(String text) {
