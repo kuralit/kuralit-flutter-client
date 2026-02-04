@@ -31,6 +31,17 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  late final KuralitWebSocketController _kuralitController =
+      KuralitWebSocket.createController(
+    config: KuralitWebSocketConfig(appId: 'your-kuralit-app-id'),
+  );
+
+  @override
+  void dispose() {
+    _kuralitController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -43,16 +54,22 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
             Text(
-              'Welcome to Kuralit Example',
-              style: TextStyle(fontSize: 24),
-            ),
-            SizedBox(height: 20),
-            Text(
-              'Start building your package features here!',
+              'Tap the button below to open the Kuralit assistant.',
               style: TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Replace "your-kuralit-app-id" in main.dart with your Kuralit app ID.',
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
+      ),
+      floatingActionButton: KuralitAnchor(
+        controller: _kuralitController,
+        label: 'Ask for help',
       ),
     );
   }

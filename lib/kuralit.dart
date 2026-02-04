@@ -21,7 +21,8 @@ export 'src/services/kuralit_websocket_controller.dart'
     show
         KuralitWebSocketController,
         KuralitWebSocket,
-        KuralitWebSocketConfig;
+        KuralitWebSocketConfig,
+        kuralitDefaultBaseWsUrl;
 
 // Export agent overlay template
 export 'templates/agent_overlay/kuralit_agent_overlay.dart' show KuralitAgentOverlay, KuralitAnchor, KuralitTheme;

@@ -1,25 +1,35 @@
-# Kuralit Flutter SDK
+# Kuralit SDK for Flutter
 
-A Flutter SDK for integrating Kuralit AI agent overlay UI with WebSocket-backed voice and text interactions.
+Flutter SDK for Kuralit real-time voice and text communication over WebSocket. Supports text chat, voice streaming (Android and Web), product/entity responses, tool status, and automatic reconnection.
+
+To get the Kuralit Agent working for your app, check [kuralit.com](https://kuralit.com).
 
 ## Features
 
-- **Voice & Text Interactions** - Support for both voice and text-based conversations with the AI agent
-- **Beautiful UI Templates** - Pre-built, customizable agent overlay UI components
-- **WebSocket Integration** - Real-time bidirectional communication with your backend
-- **Product Cards** - Display structured product information in an elegant card strip
-- **Audio Streaming** - Real-time audio capture and streaming with visual feedback
-- **Customizable Themes** - Fully customizable theming system for brand consistency
-- **Responsive Design** - Works seamlessly across different screen sizes
-- **Session Management** - Built-in session handling for conversation continuity
+- **Voice & Text Interactions** — Support for both voice and text-based conversations with the AI agent
+- **Beautiful UI Templates** — Pre-built, customizable agent overlay UI components
+- **WebSocket Integration** — Real-time bidirectional communication with your backend
+- **Product Cards** — Display structured product information in an elegant card strip
+- **Audio Streaming** — Real-time audio capture and streaming with visual feedback
+- **Customizable Themes** — Fully customizable theming system for brand consistency
+- **Responsive Design** — Works seamlessly across different screen sizes
+- **Session Management** — Built-in session handling for conversation continuity
 
 ## Installation
 
-Add this to your package's `pubspec.yaml` file:
+**From pub.dev** (when published):
 
 ```yaml
 dependencies:
-  kuralit_sdk: ^0.2.0
+  kuralit_sdk: ^0.3.0
+```
+
+**From a local path** (e.g. same repo):
+
+```yaml
+dependencies:
+  kuralit_sdk:
+    path: ../kuralit   # or path to the kuralit package
 ```
 
 Then run:
@@ -28,201 +38,77 @@ Then run:
 flutter pub get
 ```
 
-## Quick Start
+## Integration (reference code)
 
-### Basic Setup
+Use this as the reference when integrating Kuralit into any Flutter app.
 
-1. Import the package:
+### 1. Add the import
 
 ```dart
 import 'package:kuralit_sdk/kuralit.dart';
 ```
 
-2. Create a WebSocket controller:
+### 2. Create the controller and UI in a StatefulWidget
+
+Create the WebSocket controller once (e.g. in your home or main screen state) and dispose it when the widget is disposed. Add the `KuralitAnchor` as the entry point (e.g. floating action button).
 
 ```dart
-final controller = KuralitWebSocket.createController(
-  config: const KuralitWebSocketConfig(
-    wsUrl: 'wss://your-backend-url/ws',
-  ),
-);
-```
+class _YourScreenState extends State<YourScreen> {
+  late final KuralitWebSocketController _kuralitController =
+      KuralitWebSocket.createController(
+    config: KuralitWebSocketConfig(appId: 'your-kuralit-app-id'),
+  );
 
-3. Add the agent overlay to your app:
+  @override
+  void dispose() {
+    _kuralitController.dispose();
+    super.dispose();
+  }
 
-```dart
-KuralitAgentOverlay.show(
-  context,
-  controller: controller,
-  theme: const KuralitTheme(),
-);
-```
-
-### Using the Anchor Widget
-
-For a minimal entry point, use the `KuralitAnchor` widget:
-
-```dart
-KuralitAnchor(
-  controller: controller,
-  label: 'Ask for help',
-  theme: const KuralitTheme(),
-)
-```
-
-## Usage Examples
-
-### Basic Agent Overlay
-
-```dart
-import 'package:flutter/material.dart';
-import 'package:kuralit_sdk/kuralit.dart';
-
-class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final controller = KuralitWebSocket.createController(
-      config: const KuralitWebSocketConfig(
-        wsUrl: 'wss://your-backend-url/ws',
-      ),
-    );
-
-    return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: KuralitAnchor(
-            controller: controller,
-            label: 'Start Conversation',
-          ),
-        ),
-      ),
+    return Scaffold(
+      floatingActionButton: KuralitAnchor(controller: _kuralitController),
+      // ... rest of your UI
     );
   }
 }
 ```
 
-### Custom Theme
+### 3. Configuration options
 
-```dart
-final customTheme = KuralitTheme(
-  surfaceColor: Colors.white,
-  textPrimary: Colors.black87,
-  accentColor: Colors.blue,
-  cornerRadius: 16.0,
-  showLogo: true,
-);
+`appId` is required (no default). If you use [baseWsUrl] and pass an empty `appId`, the SDK throws.
 
-KuralitAgentOverlay.show(
-  context,
-  controller: controller,
-  theme: customTheme,
-);
-```
+| Use case | Code |
+|----------|------|
+| **Your app ID** (required) | `KuralitWebSocket.createController(config: KuralitWebSocketConfig(appId: 'your-app-id'))` |
+| **Custom server + app ID** | `KuralitWebSocket.createController(config: KuralitWebSocketConfig(baseWsUrl: 'wss://your-server.com/ws', appId: 'your-app-id'))` |
+| **Full URL override** (e.g. emulator) | `KuralitWebSocket.createController(config: KuralitWebSocketConfig(wsUrl: 'ws://10.0.2.2:8000/ws', appId: ''))` — when `wsUrl` is set, `appId` can be empty. |
 
-### Listening to Events
+### 4. Permissions (for voice)
 
-```dart
-controller.events.listen((event) {
-  if (event is KuralitUiTextEvent) {
-    print('Agent response: ${event.text}');
-  } else if (event is KuralitUiProductsEvent) {
-    print('Products received: ${event.items.length}');
-  } else if (event is KuralitUiConnectionEvent) {
-    print('Connection status: ${event.isConnected}');
-  }
-});
-```
+Voice streaming is supported on **Android** and **Web** only. Add microphone permissions when using voice:
 
-### Sending Text Messages
+- **Android**: `android/app/src/main/AndroidManifest.xml` — add if not present:
+  ```xml
+  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  ```
+- **Web**: The browser will prompt for microphone access when voice is used.
+- **iOS**: Not yet supported for voice streaming. When support is added, add to `ios/Runner/Info.plist`:
+  ```xml
+  <key>NSMicrophoneUsageDescription</key>
+  <string>This app uses the microphone for voice interaction.</string>
+  ```
 
-```dart
-await controller.sendText('Hello, I need help with my order');
-```
+## API summary
 
-### Managing Audio
+- **`KuralitWebSocket.createController({ config })`** — Creates the WebSocket-backed controller. Pass `KuralitWebSocketConfig(appId: '...')` to set your Kuralit app ID. Uses platform-specific WebSocket (dart:io / web) under the hood.
+- **`KuralitWebSocketController`** — Implements `KuralitUiController`: `connect()`, `sendText()`, `startMic()` / `stopMic()`, `startNewSession()`, `dispose()`. Emits events (text, products, STT, tool status, connection, errors). Automatic reconnection with backoff (up to 5 attempts) on disconnect.
+- **`KuralitAnchor(controller: ..., theme: ..., label: ...)`** — Widget that opens the agent overlay (e.g. FAB). Pass your `KuralitWebSocketController`, optional `KuralitTheme`, and optional `label` (default: `"Ask for help"`).
+- **`KuralitWebSocketConfig`** — `appId`, `baseWsUrl`, optional `wsUrl`, plus `pingInterval`, `connectTimeout`, `audioBacklog`, `audioChunk`.
+- **`kuralitDefaultBaseWsUrl`** — Default Kuralit API base URL; use with custom `appId` if needed.
+- **`startNewSession()`** — Tears down the current connection and reconnects so the backend creates a new session. Use when switching modalities (e.g. text → voice) for a fresh conversation.
 
-```dart
-// Start microphone
-await controller.startMic();
+## Example app
 
-// Stop microphone
-await controller.stopMic();
-```
-
-## API Reference
-
-### Core Classes
-
-#### `KuralitWebSocketController`
-Main controller interface for managing WebSocket connections and interactions.
-
-**Key Methods:**
-- `connect()` - Establish connection to backend
-- `sendText(String text)` - Send text message
-- `startMic()` - Start audio capture
-- `stopMic()` - Stop audio capture
-- `dispose()` - Clean up resources
-
-#### `KuralitAgentOverlay`
-Full-featured overlay widget for agent interactions.
-
-#### `KuralitAnchor`
-Minimal entry point widget that opens the full overlay.
-
-#### `KuralitTheme`
-Customizable theme configuration for UI components.
-
-#### `KuralitWebSocketConfig`
-Configuration for WebSocket connection.
-
-**Properties:**
-- `wsUrl` - WebSocket server URL
-- `pingInterval` - Keep-alive ping interval (default: 15s)
-- `connectTimeout` - Connection timeout (default: 5s)
-- `audioBacklog` - Audio buffer duration (default: 300ms)
-- `audioChunk` - Audio chunk duration (default: 20ms)
-
-### Events
-
-The SDK provides various event types through the `events` stream:
-
-- `KuralitUiTextEvent` - Text responses from the agent
-- `KuralitUiProductsEvent` - Product information
-- `KuralitUiSttEvent` - Speech-to-text transcription
-- `KuralitUiAudioLevelEvent` - Audio level for visual feedback
-- `KuralitUiConnectionEvent` - Connection status changes
-- `KuralitUiToolStatusEvent` - Tool execution status
-- `KuralitUiErrorEvent` - Error notifications
-
-## Example App
-
-See the `example` directory for a complete example app demonstrating all features.
-
-## Requirements
-
-- Flutter SDK: `>=3.10.0`
-- Dart SDK: `>=3.0.0 <4.0.0`
-
-## Dependencies
-
-- `audio_session` - Audio session management
-- `record` - Audio recording capabilities
-- `web_socket_channel` - WebSocket communication
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For issues, questions, or contributions, please open an issue on the GitHub repository.
+The **example** app in this repo (`example/lib/main.dart`) is a minimal Flutter app. Wire Kuralit as in the Integration section above: create `KuralitWebSocketController` in your screen state, dispose it in `dispose()`, and add `KuralitAnchor(controller: _kuralitController)` to your scaffold (e.g. `floatingActionButton`).

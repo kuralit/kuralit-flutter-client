@@ -64,7 +64,7 @@ class KuralitProductCardsStrip extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
-              color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+              color: Theme.of(context).textTheme.bodyMedium?.color?.withValues(alpha: 0.7),
             ),
           ),
         ],
@@ -88,8 +88,9 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = isSelected ? Colors.green.shade600 : Colors.black.withOpacity(0.08);
-    final bg = isSelected ? Colors.green.withOpacity(0.06) : Colors.white;
+    // Selection styling temporarily disabled
+    final borderColor = Colors.black.withValues(alpha: 0.08);
+    const bg = Colors.white;
 
     return Semantics(
       button: isSelectable,
@@ -97,7 +98,7 @@ class _ProductCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: isSelectable ? onTap : null,
+          onTap: null, // Selection temporarily disabled
           borderRadius: BorderRadius.circular(16),
           child: Container(
             width: 156,
@@ -107,7 +108,7 @@ class _ProductCard extends StatelessWidget {
               border: Border.all(color: borderColor, width: isSelected ? 1.4 : 1),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
+                  color: Colors.black.withValues(alpha: 0.06),
                   blurRadius: 10,
                   offset: const Offset(0, 6),
                 ),
@@ -186,35 +187,36 @@ class _ProductCard extends StatelessWidget {
                     ],
                   ),
 
-                  if (isSelectable)
-                    Positioned(
-                      top: 10,
-                      right: 10,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 140),
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.green.shade600 : Colors.white.withOpacity(0.85),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isSelected ? Colors.green.shade600 : Colors.black.withOpacity(0.12),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.10),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          isSelected ? Icons.check : Icons.add,
-                          size: 14,
-                          color: isSelected ? Colors.white : Colors.black.withOpacity(0.55),
-                        ),
-                      ),
-                    ),
+                  // Selection indicator temporarily commented out
+                  // if (isSelectable)
+                  //   Positioned(
+                  //     top: 10,
+                  //     right: 10,
+                  //     child: AnimatedContainer(
+                  //       duration: const Duration(milliseconds: 140),
+                  //       width: 22,
+                  //       height: 22,
+                  //       decoration: BoxDecoration(
+                  //         color: isSelected ? Colors.green.shade600 : Colors.white.withOpacity(0.85),
+                  //         shape: BoxShape.circle,
+                  //         border: Border.all(
+                  //           color: isSelected ? Colors.green.shade600 : Colors.black.withOpacity(0.12),
+                  //         ),
+                  //         boxShadow: [
+                  //           BoxShadow(
+                  //             color: Colors.black.withOpacity(0.10),
+                  //             blurRadius: 10,
+                  //             offset: const Offset(0, 4),
+                  //           ),
+                  //         ],
+                  //       ),
+                  //       child: Icon(
+                  //         isSelected ? Icons.check : Icons.add,
+                  //         size: 14,
+                  //         color: isSelected ? Colors.white : Colors.black.withOpacity(0.55),
+                  //       ),
+                  //     ),
+                  //   ),
                 ],
               ),
             ),

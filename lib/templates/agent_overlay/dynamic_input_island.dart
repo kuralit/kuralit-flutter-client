@@ -74,7 +74,7 @@ class _DynamicInputIslandState extends State<DynamicInputIsland> with TickerProv
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final targetWidth = _isTextMode ? screenWidth * 0.92 : 140.0;
-    final targetHeight = 60.0;
+    const targetHeight = 60.0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -89,7 +89,7 @@ class _DynamicInputIslandState extends State<DynamicInputIsland> with TickerProv
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
+                  color: Colors.black.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
@@ -120,7 +120,7 @@ class _DynamicInputIslandState extends State<DynamicInputIsland> with TickerProv
                   borderRadius: BorderRadius.circular(30),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                       blurRadius: 20,
                       offset: const Offset(0, 8),
                       spreadRadius: 2,
@@ -128,13 +128,13 @@ class _DynamicInputIslandState extends State<DynamicInputIsland> with TickerProv
                     // Breathing Glow when recording
                     if (widget.isRecording)
                       BoxShadow(
-                        color: const Color(0xFFFFD700).withOpacity(0.3 * _breathingAnimation.value),
+                        color: const Color(0xFFFFD700).withValues(alpha: 0.3 * _breathingAnimation.value),
                         blurRadius: 15 + (10 * _breathingAnimation.value),
                         spreadRadius: 2 * _breathingAnimation.value,
                       ),
                     // Inner glow
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.1),
+                      color: Colors.white.withValues(alpha: 0.1),
                       blurRadius: 1,
                       offset: const Offset(0, 1),
                       spreadRadius: 0,
@@ -171,7 +171,7 @@ class _DynamicInputIslandState extends State<DynamicInputIsland> with TickerProv
                                   height: 44,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    color: widget.isRecording ? const Color(0xFFFFD700).withOpacity(0.2) : Colors.transparent,
+                                    color: widget.isRecording ? const Color(0xFFFFD700).withValues(alpha: 0.2) : Colors.transparent,
                                   ),
                                   child: widget.isRecording
                                       ? CustomPaint(
@@ -272,8 +272,8 @@ class WaveformPainter extends CustomPainter {
     // canvas.drawCircle(center, radius, paint..style = PaintingStyle.stroke..strokeWidth = 1);
 
     // Draw dynamic waveform bars around the circle
-    final count = 12;
-    final angleStep = (2 * math.pi) / count;
+    const count = 12;
+    const angleStep = (2 * math.pi) / count;
     
     for (int i = 0; i < count; i++) {
       final angle = i * angleStep;

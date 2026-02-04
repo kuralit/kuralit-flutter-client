@@ -1,0 +1,93 @@
+{
+    "type": "response",
+    "session_id": "ws_2a92076b23fa47eb",
+    "data": {
+        "text": "Added to your cart."
+    }
+}
+
+{
+  "type": "question",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "question": "In the shown options,\nFollow-up question asked: Which one would you like to add to your cart?\nUser selected: [1, 3]\nAnswered as: add this to cart"
+}
+
+
+{
+  "type": "response",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "data": {
+      "entity_type": "product",
+      "title": "Available Products",
+      "items": [
+          {
+              "id": 1,
+              "title": "Fjallraven - Foldsack No. 1 Backpack, Fits 15 Laptops",
+              "price": 109.95,
+              "description": "Your perfect pack for everyday use and walks in the forest. Stash your laptop (up to 15 inches) in the padded sleeve, your everyday",
+              "category": "men's clothing",
+              "image": "https://fakestoreapi.com/img/81fPKd-2AYL._AC_SL1500_t.png",
+              "rating": {
+                  "rate": 3.9,
+                  "count": 120
+              }
+          },
+          {
+              "id": 2,
+              "title": "Mens Casual Premium Slim Fit T-Shirts ",
+              "price": 22.3,
+              "description": "Slim-fitting style, contrast raglan long sleeve, three-button henley placket, light weight & soft fabric for breathable and comfortable wearing. And Solid stitched shirts with round neck made for durability and a great fit for casual fashion wear and diehard baseball fans. The Henley style round neckline includes a three-button placket.",
+              "category": "men's clothing",
+              "image": "https://fakestoreapi.com/img/71-3HjGNDUL._AC_SY879._SX._UX._SY._UY_t.png",
+              "rating": {
+                  "rate": 4.1,
+                  "count": 259
+              }
+          }
+      ],
+      "default_action": "primary",
+      "follow_up_question": "Which one would you like to add to your cart?"
+  }
+}
+
+{
+  "type": "tool_status",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "status": "completed",
+  "tool_name": "Get_All_Products",
+  "tool_id": "685efd1f-f2e2-446b-8d9a-b0ec7e90066b"
+}
+
+{
+  "type": "tool_status",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "status": "starting",
+  "tool_name": "Get_All_Products",
+  "tool_id": "153a7b7a-4e90-4efd-bf84-a648008d22cf"
+}
+
+{
+  "type": "question",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "question": "What are the products you've with you?"
+}
+
+{
+    "type": "response",
+    "session_id": "ws_15ad2cf2ca6e4c1b",
+    "data": {
+        "text": "Hi there! How can I help you?"
+    }
+}
+
+{
+  "type": "question",
+  "session_id": "ws_15ad2cf2ca6e4c1b",
+  "question": "Hi"
+}
+
+
+{
+    "type": "session_created",
+    "session_id": "ws_15ad2cf2ca6e4c1b"
+}
