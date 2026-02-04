@@ -1,3 +1,10 @@
+## 0.3.0
+
+* Bump version for pub.dev release
+* README: add Features section, kuralit.com link, platform support (Android/Web voice), API summary, and example app reference
+* Example app: integrate Kuralit (controller, dispose, KuralitAnchor) to match README
+* Pub layout: add homepage in pubspec; use `doc/` directory per pub convention
+
 ## 0.2.0
 
 * Complete rewrite with new architecture

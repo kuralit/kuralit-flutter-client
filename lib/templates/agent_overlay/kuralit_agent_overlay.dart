@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../base_template.dart';
 import '../kuralit_ui_controller.dart';
 import 'product_cards_strip.dart';
@@ -50,7 +51,8 @@ class KuralitAnchor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => KuralitAgentOverlay.show(context, controller: controller, theme: theme),
+      onTap: () => KuralitAgentOverlay.show(context,
+          controller: controller, theme: theme),
       child: Container(
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -59,7 +61,7 @@ class KuralitAnchor extends StatelessWidget {
           borderRadius: BorderRadius.circular(theme.cornerRadius),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 16,
               offset: const Offset(0, 4),
             ),
@@ -109,8 +111,10 @@ class KuralitAgentOverlay extends KuralitBaseTemplate {
       backgroundColor: Colors.transparent,
       enableDrag: true,
       builder: (context) => Padding(
-         padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-         child: KuralitAgentOverlay(controller: controller, sessionId: sessionId, theme: theme),
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: KuralitAgentOverlay(
+            controller: controller, sessionId: sessionId, theme: theme),
       ),
     );
   }
@@ -121,8 +125,8 @@ class KuralitAgentOverlay extends KuralitBaseTemplate {
 
 class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
     with TickerProviderStateMixin {
-  
   // Logic State
+  bool _isConnecting = false;
   StreamSubscription<KuralitUiEvent>? _eventSubscription;
   bool _isRecording = false;
 
@@ -134,7 +138,7 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   String? _processingToolName;
   String? _toolStatusText; // transient row above input
   final Set<String> _selectedProductIds = <String>{};
-  
+
   // Input mode state
   _InputMode _mode = _InputMode.voice;
 
@@ -154,16 +158,32 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   // Mic mode STT (Phase 2): show interim live; final becomes a user bubble.
   String? _liveSttText;
 
+  // Deduplication: prevent sending the same final transcript twice
+  String? _lastSentFinalTranscript;
+  DateTime? _lastSentFinalTranscriptTime;
+
   @override
   void initState() {
     super.initState();
     _setupEventListener();
-    
+
     // Wave controller for listening state only
     _waveController = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 2000)
-    );
+        vsync: this, duration: const Duration(milliseconds: 2000));
+
+    // Auto-connect when overlay opens; show loading until connected or final failure
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.controller.isConnected) {
+        setState(() => _isConnecting = false);
+        return;
+      }
+      setState(() => _isConnecting = true);
+      widget.controller.connect().catchError((_) {
+        // Connection result (success or final failure) is handled via events
+        if (mounted) setState(() => _isConnecting = false);
+      });
+    });
   }
 
   void _setupEventListener() {
@@ -197,7 +217,7 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         }
       } else if (event is KuralitUiConnectionEvent) {
         setState(() {
-          // Connection status updated
+          _isConnecting = false;
         });
 
         // Mic-only behavior: if we lose connection while recording, stop and show toast.
@@ -222,11 +242,42 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         if (t.isEmpty) return;
 
         if (event.isFinal) {
+          // Deduplication: prevent processing the same final transcript twice
+          // This can happen if WebSocket receives duplicate messages or
+          // if there are multiple active subscriptions
+          final now = DateTime.now();
+          final isDuplicate = _lastSentFinalTranscript == t &&
+              _lastSentFinalTranscriptTime != null &&
+              now.difference(_lastSentFinalTranscriptTime!).inMilliseconds <
+                  1000;
+
+          if (isDuplicate) {
+            debugPrint(
+                '⚠️  Duplicate final_transcript detected and ignored: "$t"');
+            return;
+          }
+
+          // Update deduplication tracking
+          _lastSentFinalTranscript = t;
+          _lastSentFinalTranscriptTime = now;
+
           setState(() {
             _liveSttText = null;
           });
           _appendUserText(t);
           _showAssistantTyping();
+
+          // For Audio mode: Client only receives and displays messages.
+          // The server processes the audio stream automatically and sends responses.
+          // No need to send final_transcript back to the server.
+          // The server already has the audio and will respond accordingly.
+
+          // Clear selection (if any products were selected, they're just for display)
+          if (_selectedProductIds.isNotEmpty) {
+            setState(() {
+              _selectedProductIds.clear();
+            });
+          }
         } else {
           setState(() {
             _liveSttText = t;
@@ -245,23 +296,48 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
           _isProcessingTool = false;
           _processingToolName = null;
           _toolStatusText = null;
+          _isConnecting = false;
         });
-        _appendSystemMessage(event.message);
+
+        // Check if it's a microphone permission error
+        if (event.message.contains('microphone permission')) {
+          _appendPermissionDeniedMessage(event.message);
+
+          // Stop the mic if it was active
+          if (_isRecording) {
+            unawaited(_stopAgent());
+          }
+        } else {
+          _appendSystemMessage(event.message);
+        }
       }
     });
   }
 
-  void _sendText(String text) {
-    final q = text.trim();
-    if (q.isEmpty) return;
+  /// Builds a structured product selection message if products are selected,
+  /// otherwise returns the original user text.
+  ///
+  /// Format: "In the shown options,\nFollow-up question asked: {followUpQuestion}\nUser selected: [{selectedIds}]\nAnswered as: {userText}"
+  String _buildProductSelectionMessage(String userText) {
+    // Check if products are selected
+    if (_selectedProductIds.isEmpty) {
+      return userText;
+    }
 
-    _appendUserText(q);
-    _showAssistantTyping();
+    // Find the last products message to get the follow-up question
+    final lastProductsIndex = _messages
+        .lastIndexWhere((m) => m.type == _OverlayMessageType.assistantProducts);
+    final lastProducts =
+        lastProductsIndex == -1 ? null : _messages[lastProductsIndex].products;
 
-    // If user selected product cards, enrich the question with structured context.
-    final lastProductsIndex =
-        _messages.lastIndexWhere((m) => m.type == _OverlayMessageType.assistantProducts);
-    final lastProducts = lastProductsIndex == -1 ? null : _messages[lastProductsIndex].products;
+    // If no products message found or no follow-up question, return original text
+    if (lastProducts == null ||
+        lastProducts.followUpQuestion == null ||
+        lastProducts.followUpQuestion!.isEmpty) {
+      return userText;
+    }
+
+    // Format selected IDs: numeric IDs as numbers, string IDs as quoted strings
     final selectedIds = _selectedProductIds.toList();
     selectedIds.sort((a, b) {
       final ai = int.tryParse(a);
@@ -275,17 +351,28 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
       return asInt != null ? asInt.toString() : '"$id"';
     }).join(', ');
 
-    final effectiveQuestion = (lastProducts != null && selectedIds.isNotEmpty)
-        ? [
-            'In the shown options,',
-            'Follow-up question asked: ${lastProducts.followUpQuestion ?? ''}',
-            'User selected: [$selectedIdsDisplay]',
-            'Answered as: $q',
-          ].join('\n')
-        : q;
+    // Build the structured message in the exact format required
+    return [
+      'In the shown options,',
+      'Follow-up question asked: ${lastProducts.followUpQuestion}',
+      'User selected: [$selectedIdsDisplay]',
+      'Answered as: $userText',
+    ].join('\n');
+  }
+
+  void _sendText(String text) {
+    final q = text.trim();
+    if (q.isEmpty) return;
+
+    _appendUserText(q);
+    _showAssistantTyping();
+
+    // Build the effective question (with product selection context if applicable)
+    final effectiveQuestion = _buildProductSelectionMessage(q);
 
     widget.controller.sendText(effectiveQuestion);
 
+    // Clear selection after sending
     if (_selectedProductIds.isNotEmpty) {
       setState(() {
         _selectedProductIds.clear();
@@ -347,6 +434,16 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
     _scrollToBottom();
   }
 
+  void _appendPermissionDeniedMessage(String message) {
+    final t = message.trim();
+    if (t.isEmpty) return;
+    setState(() {
+      _hideAssistantTyping();
+      _messages.add(_OverlayMessage.permissionDenied(t));
+      _trimToLast10Turns();
+    });
+    _scrollToBottom();
+  }
 
   void _resetConversationForNewSession() {
     if (!mounted) return;
@@ -379,7 +476,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   void _showAssistantTyping() {
     setState(() {
       // Ensure only one typing indicator exists at the end.
-      _messages.removeWhere((m) => m.type == _OverlayMessageType.assistantTyping);
+      _messages
+          .removeWhere((m) => m.type == _OverlayMessageType.assistantTyping);
       _messages.add(_OverlayMessage.assistantTyping());
     });
     _scrollToBottom();
@@ -393,8 +491,9 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
     // Keep last 10 turns. We store user+assistant as individual nodes: cap at 20 nodes.
     const maxNodes = 20;
     // Do not count the typing indicator toward the cap.
-    int nonTypingCount() =>
-        _messages.where((m) => m.type != _OverlayMessageType.assistantTyping).length;
+    int nonTypingCount() => _messages
+        .where((m) => m.type != _OverlayMessageType.assistantTyping)
+        .length;
 
     while (nonTypingCount() > maxNodes) {
       final idx = _messages.indexWhere(
@@ -439,7 +538,7 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
 
   Future<void> _startAgent() async {
     if (_isRecording) return;
-    
+
     // Ensure voice is primary UI.
     _switchToVoiceMode();
 
@@ -457,17 +556,26 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
 
     HapticFeedback.selectionClick();
     _waveController.repeat(reverse: true);
-    
+
     try {
       await widget.controller.startMic();
     } catch (e) {
-      // Error handling is done by the controller
+      // If there was an error starting the mic, we need to reset the UI state
+      setState(() {
+        _isRecording = false;
+        _audioLevel = 0.0;
+      });
+      _waveController.stop();
+      _waveController.reset();
+
+      debugPrint('Microphone error: $e');
+      // Error events are handled by the controller through the event system
     }
   }
 
   Future<void> _stopAgent() async {
     if (!_isRecording) return;
-    
+
     HapticFeedback.selectionClick();
     _waveController.stop();
     _waveController.reset();
@@ -510,10 +618,11 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   Widget build(BuildContext context) {
     final theme = widget.theme;
     final screenHeight = MediaQuery.of(context).size.height;
-    
+
     // Level 2 (Assist) vs Level 3 (Focus)
     // If typing, we might want to ensure enough height, but usually keyboard pushes up.
-    final targetHeight = _isFocusMode ? screenHeight * 0.92 : screenHeight * 0.55;
+    final targetHeight =
+        _isFocusMode ? screenHeight * 0.92 : screenHeight * 0.55;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 280),
@@ -527,43 +636,43 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.12), // Darker, more specific shadow
-            offset: const Offset(0, -6),           // Top-edge focus
-            blurRadius: 24,                        // Soft spread
+            color:
+                Colors.black.withValues(alpha: 0.12), // Darker, more specific shadow
+            offset: const Offset(0, -6), // Top-edge focus
+            blurRadius: 24, // Soft spread
           ),
         ],
         // Premium touch: Faint white highlight on top
         border: Border(
-           top: BorderSide(
-              color: Colors.white.withOpacity(0.6), 
-              width: 1
-           )
-        ),
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.6), width: 1)),
       ),
       child: Stack(
         children: [
-           // Optional Glass Gradient at top
-           Positioned(
-             top: 0, left: 0, right: 0, height: 80,
-             child: IgnorePointer(
-               child: Container(
-                 decoration: BoxDecoration(
-                   gradient: LinearGradient(
-                     begin: Alignment.topCenter,
-                     end: Alignment.bottomCenter,
-                     colors: [
-                       theme.surfaceColor.withOpacity(0.95),
-                       theme.surfaceColor.withOpacity(0.0),
-                     ],
-                   ),
-                   borderRadius: BorderRadius.only(
-                     topLeft: Radius.circular(theme.cornerRadius),
-                     topRight: Radius.circular(theme.cornerRadius),
-                   ),
-                 ),
-               ),
-             ),
-           ),
+          // Optional Glass Gradient at top
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 80,
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      theme.surfaceColor.withValues(alpha: 0.95),
+                      theme.surfaceColor.withValues(alpha: 0.0),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(theme.cornerRadius),
+                    topRight: Radius.circular(theme.cornerRadius),
+                  ),
+                ),
+              ),
+            ),
+          ),
 
           Column(
             children: [
@@ -580,146 +689,183 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
                         opacity: 0.8,
                         child: Row(
                           children: [
-                             Icon(Icons.eco, size: 18, color: theme.iconNeutral),
-                             const SizedBox(width: 8),
-                             Text(
-                               "Kuralit",
-                               style: TextStyle(
-                                 color: theme.textSecondary,
-                                 fontWeight: FontWeight.w600,
-                                 fontSize: 14,
-                               ),
-                             ),
+                            Icon(Icons.eco, size: 18, color: theme.iconNeutral),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Kuralit",
+                              style: TextStyle(
+                                color: theme.textSecondary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
                           ],
                         ),
                       )
                     else
-               const SizedBox(width: 40),
+                      const SizedBox(width: 40),
 
                     // Center: Grab Handle
                     Expanded(
                       child: Center(
                         child: Container(
-                          width: 32, height: 4,
+                          width: 32,
+                          height: 4,
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.06),
+                            color: Colors.black.withValues(alpha: 0.06),
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
                       ),
                     ),
 
-                    // Right: Focus Toggle
-                    // Hide while in text mode to reduce clutter.
-                    if (_mode == _InputMode.voice)
-                      GestureDetector(
-                        onTap: () => setState(() => _isFocusMode = !_isFocusMode),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          child: Icon(
-                            _isFocusMode ? Icons.unfold_less : Icons.unfold_more,
-                            color: theme.iconNeutral.withOpacity(0.8),
-                            size: 24,
-                          ),
+                    // Right: Focus Toggle (always visible in voice and typing mode)
+                    GestureDetector(
+                      onTap: () =>
+                          setState(() => _isFocusMode = !_isFocusMode),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          _isFocusMode
+                              ? Icons.unfold_less
+                              : Icons.unfold_more,
+                          color: theme.iconNeutral.withValues(alpha: 0.8),
+                          size: 24,
                         ),
-                      )
-                    else
-                      const SizedBox(width: 32),
+                      ),
+                    ),
                   ],
                 ),
               ),
 
-              // 2. Main Content (Option A: chat history)
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: _buildConversation(theme),
+              // 2. Main Content: loading until connected, then chat + controls
+              if (_isConnecting) ...[
+                Expanded(
+                  child: Semantics(
+                    label: 'Connecting to assistant',
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(
+                            color: theme.accentColor,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Connecting to assistant…',
+                            style: TextStyle(
+                              color: theme.textSecondary,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ),
-
-                      if (_isProcessingTool && _processingToolName != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            '${_processingToolName!} • working…',
-                            style: TextStyle(
-                              color: theme.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        )
-                      else if (_toolStatusText != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            _toolStatusText!,
-                            style: TextStyle(
-                              color: theme.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        )
-                      else
-                        const SizedBox(height: 8),
-
-                      // Mic mode transcript (Phase 2): interim text shown live.
-                      if (_mode == _InputMode.voice && _liveSttText != null) ...[
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: Colors.black.withOpacity(0.06)),
-                          ),
-                          child: Text(
-                            _liveSttText!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: theme.textPrimary.withOpacity(0.85),
-                              fontSize: 13,
-                              height: 1.2,
-                            ),
-                          ),
-                        ),
-                      ],
-
-                      // Voice visual (only in voice mode)
-                      if (_mode == _InputMode.voice) ...[
-                        SizedBox(height: _isRecording ? 12 : 6),
-                        SizedBox(
-                          height: _isRecording ? 48 : 0,
-                          child: _isRecording ? _buildWaveform(theme) : null,
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 56),
+              ] else ...[
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: _buildConversation(theme),
+                        ),
 
-              // 3. Bottom Controls (voice-first; text bar only after keyboard tap)
-              Padding(
-                padding: EdgeInsets.fromLTRB(24, 14, 24, MediaQuery.of(context).padding.bottom + 18),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 260),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    final isEnteringText = child.key == const ValueKey('textBar');
-                    final begin = isEnteringText ? const Offset(-1.0, 0.0) : const Offset(0.0, 0.0);
-                    return SlideTransition(
-                      position: Tween<Offset>(begin: begin, end: Offset.zero).animate(animation),
-                      child: FadeTransition(opacity: animation, child: child),
-                    );
-                  },
-                  child: _mode == _InputMode.text
-                      ? _buildTextInputBar(theme, key: const ValueKey('textBar'))
-                      : _buildVoiceControls(theme, key: const ValueKey('voiceControls')),
+                        if (_isProcessingTool && _processingToolName != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              '${_processingToolName!} • working…',
+                              style: TextStyle(
+                                color: theme.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          )
+                        else if (_toolStatusText != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              _toolStatusText!,
+                              style: TextStyle(
+                                color: theme.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          )
+                        else
+                          const SizedBox(height: 8),
+
+                        // Mic mode transcript (Phase 2): interim text shown live.
+                        if (_mode == _InputMode.voice &&
+                            _liveSttText != null) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.04),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: Colors.black.withValues(alpha: 0.06)),
+                            ),
+                            child: Text(
+                              _liveSttText!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: theme.textPrimary.withValues(alpha: 0.85),
+                                fontSize: 13,
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                        ],
+
+                        // Voice visual (only in voice mode)
+                        if (_mode == _InputMode.voice) ...[
+                          SizedBox(height: _isRecording ? 12 : 6),
+                          SizedBox(
+                            height: _isRecording ? 48 : 0,
+                            child: _isRecording ? _buildWaveform(theme) : null,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-              ),
+
+                // 3. Bottom Controls (voice-first; text bar only after keyboard tap)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                      24, 14, 24, MediaQuery.of(context).padding.bottom + 18),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      final isEnteringText =
+                          child.key == const ValueKey('textBar');
+                      final begin = isEnteringText
+                          ? const Offset(-1.0, 0.0)
+                          : const Offset(0.0, 0.0);
+                      return SlideTransition(
+                        position: Tween<Offset>(begin: begin, end: Offset.zero)
+                            .animate(animation),
+                        child: FadeTransition(opacity: animation, child: child),
+                      );
+                    },
+                    child: _mode == _InputMode.text
+                        ? _buildTextInputBar(theme,
+                            key: const ValueKey('textBar'))
+                        : _buildVoiceControls(theme,
+                            key: const ValueKey('voiceControls')),
+                  ),
+                ),
+              ],
             ],
           ),
         ],
@@ -745,10 +891,12 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
             ),
             const SizedBox(height: 6),
             Text(
-              _mode == _InputMode.voice ? 'Voice is primary. Tap keyboard to type.' : 'Type a question to start',
+              _mode == _InputMode.voice
+                  ? 'Voice is primary. Tap keyboard to type.'
+                  : 'Type a question to start',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: theme.textSecondary.withOpacity(0.7),
+                color: theme.textSecondary.withValues(alpha: 0.7),
                 fontSize: 14,
               ),
             ),
@@ -780,9 +928,9 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
             constraints: const BoxConstraints(maxWidth: 320),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: theme.accentColor.withOpacity(0.12),
+              color: theme.accentColor.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: theme.accentColor.withOpacity(0.18)),
+              border: Border.all(color: theme.accentColor.withValues(alpha: 0.18)),
             ),
             child: Text(
               msg.text!,
@@ -801,9 +949,9 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
             constraints: const BoxConstraints(maxWidth: 320),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.black.withOpacity(0.06)),
+              border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
             ),
             child: Text(
               msg.text!,
@@ -816,27 +964,29 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
           ),
         );
       case _OverlayMessageType.assistantProducts:
-        final lastProductsIndex =
-            _messages.lastIndexWhere((m) => m.type == _OverlayMessageType.assistantProducts);
-        final isActiveProducts =
-            lastProductsIndex != -1 && identical(_messages[lastProductsIndex], msg);
+        final lastProductsIndex = _messages.lastIndexWhere(
+            (m) => m.type == _OverlayMessageType.assistantProducts);
+        final isActiveProducts = lastProductsIndex != -1 &&
+            identical(_messages[lastProductsIndex], msg);
 
         return Align(
           alignment: Alignment.centerLeft,
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.03),
+              color: Colors.black.withValues(alpha: 0.03),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.black.withOpacity(0.05)),
+              border: Border.all(color: Colors.black.withValues(alpha: 0.05)),
             ),
             child: KuralitProductCardsStrip(
               title: msg.products!.title,
               items: msg.products!.items,
               followUpQuestion: msg.products!.followUpQuestion,
               isSelectable: isActiveProducts,
-              selectedIds: isActiveProducts ? _selectedProductIds : const <String>{},
-              onToggleSelected: isActiveProducts ? _toggleSelectedProduct : null,
+              selectedIds:
+                  isActiveProducts ? _selectedProductIds : const <String>{},
+              onToggleSelected:
+                  isActiveProducts ? _toggleSelectedProduct : null,
             ),
           ),
         );
@@ -846,9 +996,9 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha:0.04),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.black.withOpacity(0.06)),
+              border: Border.all(color: Colors.black.withValues(alpha:0.06)),
             ),
             child: const _TypingDots(),
           ),
@@ -859,9 +1009,9 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.08),
+              color: Colors.red.withValues(alpha:0.08),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.red.withOpacity(0.18)),
+              border: Border.all(color: Colors.red.withValues(alpha:0.18)),
             ),
             child: Text(
               msg.text!,
@@ -869,6 +1019,41 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
                 color: Colors.red.shade700,
                 fontSize: 12,
               ),
+            ),
+          ),
+        );
+      case _OverlayMessageType.permissionDenied:
+        return Align(
+          alignment: Alignment.center,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha:0.1),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.orange.withValues(alpha:0.2)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  msg.text!,
+                  style: TextStyle(
+                    color: Colors.orange.shade800,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (msg.text!.contains("permanently denied"))
+                  OutlinedButton(
+                    onPressed: () => openAppSettings(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange.shade800,
+                      side: BorderSide(color: Colors.orange.shade800),
+                    ),
+                    child: const Text("Open Settings"),
+                  ),
+              ],
             ),
           ),
         );
@@ -898,8 +1083,11 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         ),
         GestureDetector(
           onTap: () {
-            if (_isRecording) _stopAgent();
-            else _startAgent();
+            if (_isRecording) {
+              _stopAgent();
+            } else {
+              _startAgent();
+            }
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
@@ -915,8 +1103,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
               boxShadow: [
                 BoxShadow(
                   color: _isRecording
-                      ? theme.accentColor.withOpacity(0.3)
-                      : Colors.black.withOpacity(0.05),
+                      ? theme.accentColor.withValues(alpha:0.3)
+                      : Colors.black.withValues(alpha:0.05),
                   blurRadius: _isRecording ? 20 : 10,
                   offset: const Offset(0, 4),
                 ),
@@ -932,7 +1120,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
         SizedBox(
           width: 48,
           child: IconButton(
-            icon: Icon(Icons.keyboard_arrow_down, color: theme.iconNeutral, size: 32),
+            icon: Icon(Icons.keyboard_arrow_down,
+                color: theme.iconNeutral, size: 32),
             onPressed: () {
               _stopAgent();
               Navigator.of(context).pop();
@@ -956,7 +1145,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
             // Switch back to voice UI and start a fresh backend session.
             _switchToVoiceMode();
             if (widget.controller is KuralitWebSocketController) {
-              await (widget.controller as KuralitWebSocketController).startNewSession();
+              await (widget.controller as KuralitWebSocketController)
+                  .startNewSession();
               _resetConversationForNewSession();
             } else {
               await widget.controller.connect();
@@ -972,10 +1162,10 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.black.withOpacity(0.06)),
+              border: Border.all(color: Colors.black.withValues(alpha:0.06)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha:0.05),
                   blurRadius: 16,
                   offset: const Offset(0, 8),
                 ),
@@ -986,7 +1176,8 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
               focusNode: _textFocusNode,
               decoration: InputDecoration(
                 hintText: 'Type your question',
-                hintStyle: TextStyle(color: theme.textSecondary.withOpacity(0.6)),
+                hintStyle:
+                    TextStyle(color: theme.textSecondary.withValues(alpha:0.6)),
                 border: InputBorder.none,
                 isDense: true,
               ),
@@ -1020,34 +1211,73 @@ class _KuralitAgentOverlayState extends State<KuralitAgentOverlay>
   }
 
   Widget _buildWaveform(KuralitTheme theme) {
-     final level = _audioLevel.clamp(0.0, 1.0);
-     return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: List.generate(5, (index) {
-           return AnimatedBuilder(
-             animation: _waveController,
-             builder: (context, child) {
-                // Use real mic level + a gentle animation so it feels alive.
-                final phase = index * 0.9;
-                final pulse = (math.sin((_waveController.value * math.pi * 2) + phase) * 0.5 + 0.5);
-                final base = 6.0;
-                final amp = 6.0 + (28.0 * level);
-                final height = base + amp * (0.30 + 0.70 * pulse);
-                
-                return AnimatedContainer(
-                   duration: const Duration(milliseconds: 120),
-                   width: 5,
-                   height: height.clamp(5, 40),
-                   margin: const EdgeInsets.symmetric(horizontal: 4),
-                   decoration: BoxDecoration(
-                     color: theme.accentColor.withOpacity(0.8),
-                     borderRadius: BorderRadius.circular(10),
-                   ),
-                );
-             },
-           );
-        }),
-     );
+    final level = _audioLevel.clamp(0.0, 1.0);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(5, (index) {
+        // Calculate distance from center (0 for center, 1 for next to center, 2 for outer)
+        final distanceFromCenter = (index - 2).abs();
+
+        // Center bar (index 2) should be tallest during speech
+        // Side bars (index 1, 3) should be medium height
+        // Outer bars (index 0, 4) should be shortest
+
+        return AnimatedBuilder(
+          animation: _waveController,
+          builder: (context, child) {
+            // Very low base height (almost flat during silence)
+            const baseHeight = 2.0;
+
+            // Detect speech vs silence with clearer threshold
+            final bool isSpeaking = level > 0.15;
+
+            // Calculate the height based on whether we're speaking or not
+            final double barHeight;
+
+            if (isSpeaking) {
+              // Strong amplification during speech - using cubic effect for more drama
+              final effectiveLevel = math.pow(level, 3).toDouble();
+
+              // Apply center-focused height multiplier with dramatic center effect
+              final emphasizedMultiplier = distanceFromCenter == 0 ? 1.0 :
+                                         distanceFromCenter == 1 ? 0.45 : 0.2;
+
+              // Maximum height for center bar during speech
+              const maxAmp = 38.0;
+
+              // Subtle animation only during speech
+              final animationFactor = 0.1 * level *
+                math.sin(_waveController.value * math.pi * 2 * (1.0 + distanceFromCenter * 0.2));
+
+              // Height calculation focused on center bars during speech
+              barHeight = baseHeight + (maxAmp * effectiveLevel * emphasizedMultiplier) + animationFactor;
+            } else {
+              // During silence - all bars stay very low with minimal movement
+              const minAmp = 3.0;
+              final tinyAnimation = 0.5 * math.sin(_waveController.value * math.pi * 2 + (index * 0.5));
+
+              // Nearly flat during silence
+              barHeight = baseHeight + (minAmp * level) + tinyAnimation;
+            }
+
+            return AnimatedContainer(
+              // Fast response to audio changes
+              duration: const Duration(milliseconds: 60),
+              width: 5,
+              height: barHeight.clamp(3, 40),
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                // Color intensity increases with level
+                color: isSpeaking
+                    ? theme.accentColor.withValues(alpha:0.5 + (level * 0.5))
+                    : theme.accentColor.withValues(alpha:0.4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            );
+          },
+        );
+      }),
+    );
   }
 }
 
@@ -1059,6 +1289,7 @@ enum _OverlayMessageType {
   assistantProducts,
   assistantTyping,
   system,
+  permissionDenied, // New state for permission errors
 }
 
 class _OverlayMessage {
@@ -1079,13 +1310,17 @@ class _OverlayMessage {
       _OverlayMessage._(type: _OverlayMessageType.assistantText, text: text);
 
   factory _OverlayMessage.assistantProducts(KuralitUiProductsEvent products) =>
-      _OverlayMessage._(type: _OverlayMessageType.assistantProducts, products: products);
+      _OverlayMessage._(
+          type: _OverlayMessageType.assistantProducts, products: products);
 
   factory _OverlayMessage.assistantTyping() =>
       const _OverlayMessage._(type: _OverlayMessageType.assistantTyping);
 
   factory _OverlayMessage.system(String text) =>
       _OverlayMessage._(type: _OverlayMessageType.system, text: text);
+
+  factory _OverlayMessage.permissionDenied(String text) =>
+      _OverlayMessage._(type: _OverlayMessageType.permissionDenied, text: text);
 }
 
 class _TypingDots extends StatefulWidget {
@@ -1095,7 +1330,8 @@ class _TypingDots extends StatefulWidget {
   State<_TypingDots> createState() => _TypingDotsState();
 }
 
-class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderStateMixin {
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 900),
@@ -1123,7 +1359,7 @@ class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderState
               height: 6,
               margin: const EdgeInsets.symmetric(horizontal: 2),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(opacity),
+                color: Colors.black.withValues(alpha:opacity),
                 shape: BoxShape.circle,
               ),
             );
@@ -1157,10 +1393,10 @@ class _CircleActionButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.black.withOpacity(0.06)),
+          border: Border.all(color: Colors.black.withValues(alpha:0.06)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha:0.05),
               blurRadius: 16,
               offset: const Offset(0, 8),
             ),

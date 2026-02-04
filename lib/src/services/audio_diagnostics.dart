@@ -30,17 +30,14 @@ class AudioDiagnostics {
   static void _logFirstChunk(Uint8List chunk, String source) {
     debugPrint('\n=== AUDIO CHUNK ANALYSIS (source: $source) ===');
     debugPrint('Chunk size: ${chunk.length} bytes');
-
-    // Check for WAV header
-    final hasWavHeader = chunk.length >= 4 && 
-                         chunk[0] == 0x52 && 
-                         chunk[1] == 0x49 && 
-                         chunk[2] == 0x46 && 
-                         chunk[3] == 0x46;
-    debugPrint('WAV header detected: $hasWavHeader');
+    debugPrint(
+        'Note: record package provides raw PCM16 bytes without WAV headers');
 
     // Show first 32 bytes in hex
-    final hexBytes = chunk.take(32).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    final hexBytes = chunk
+        .take(32)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(' ');
     debugPrint('First 32 bytes (hex): $hexBytes');
 
     // Analyze as PCM16 samples
@@ -107,7 +104,8 @@ class AudioDiagnostics {
     // Calculate expected duration
     const sampleRate = 16000;
     final durationMs = (samples.length / sampleRate * 1000).toStringAsFixed(1);
-    debugPrint('  Duration: ${durationMs}ms (expected: ~20ms for standard chunk)');
+    debugPrint(
+        '  Duration: ${durationMs}ms (expected: ~20ms for standard chunk)');
   }
 
   static void _logSummary() {
@@ -118,20 +116,22 @@ class AudioDiagnostics {
     final avgChunkSize = _totalBytes / _totalChunks;
     final chunksPerSecond = _totalChunks / elapsedSeconds;
 
-    print('📊 Audio Streaming Summary:');
-    print('   Total chunks: $_totalChunks');
-    print('   Total bytes: ${(_totalBytes / 1024).toStringAsFixed(1)} KB');
-    print('   Elapsed: ${elapsedSeconds.toStringAsFixed(1)}s');
-    print('   Avg chunk size: ${avgChunkSize.toStringAsFixed(0)} bytes (expected: 640)');
-    print('   Chunks/sec: ${chunksPerSecond.toStringAsFixed(1)} (expected: 50 @ 20ms chunks)');
+    // print('📊 Audio Streaming Summary:');
+    // print('   Total chunks: $_totalChunks');
+    // print('   Total bytes: ${(_totalBytes / 1024).toStringAsFixed(1)} KB');
+    // print('   Elapsed: ${elapsedSeconds.toStringAsFixed(1)}s');
+    // print(
+    //     '   Avg chunk size: ${avgChunkSize.toStringAsFixed(0)} bytes (expected: 640)');
+    // print(
+    //     '   Chunks/sec: ${chunksPerSecond.toStringAsFixed(1)} (expected: 50 @ 20ms chunks)');
 
     if ((avgChunkSize - 640).abs() > 100) {
-      print('   ⚠️  Chunk size deviates significantly from expected 640 bytes');
+      // print('   ⚠️  Chunk size deviates significantly from expected 640 bytes');
     }
 
     if ((chunksPerSecond - 50).abs() > 10) {
-      print('   ⚠️  Chunk rate deviates from expected 50/sec');
-      print('      This suggests timing or buffering issues');
+      // print('   ⚠️  Chunk rate deviates from expected 50/sec');
+      // print('      This suggests timing or buffering issues');
     }
   }
 
@@ -187,23 +187,8 @@ class AudioDiagnostics {
     _byteOrderVerified = false;
   }
 
-  /// Check if a chunk might contain a WAV header
-  static bool hasWavHeader(Uint8List chunk) {
-    if (chunk.length < 44) return false;
-    return chunk[0] == 0x52 && chunk[1] == 0x49 &&
-           chunk[2] == 0x46 && chunk[3] == 0x46;
-  }
-
-  /// Strip WAV header if present (returns original if no header)
-  static Uint8List stripWavHeader(Uint8List chunk) {
-    if (hasWavHeader(chunk)) {
-      debugPrint('🔧 Stripping WAV header (44 bytes)');
-      return Uint8List.fromList(chunk.sublist(44));
-    }
-    return chunk;
-  }
-
   /// Validate that bytes are likely valid PCM16
+  /// Note: record package provides raw PCM16 bytes without WAV headers
   static String? validatePcm16(Uint8List chunk) {
     if (chunk.isEmpty) {
       return 'Empty chunk';
@@ -211,10 +196,6 @@ class AudioDiagnostics {
 
     if (chunk.length % 2 != 0) {
       return 'Odd byte count (${chunk.length}) - PCM16 needs even bytes';
-    }
-
-    if (hasWavHeader(chunk)) {
-      return 'WAV header detected - must strip before sending';
     }
 
     // Check if completely silent (all zeros)
